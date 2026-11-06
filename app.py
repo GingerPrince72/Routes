@@ -6,8 +6,7 @@ from ortools.constraint_solver import routing_enums_pb2, pywrapcp
 
 DB_NAME = "delivery_database.db"
 # Replace with your Google Maps API key (requires Routes API enabled in Google Cloud)
-GOOGLE_MAPS_API_KEY = "YOUR_GOOGLE_MAPS_API_KEY"
-
+GOOGLE_MAPS_API_KEY = st.secrets.get("GOOGLE_MAPS_API_KEY", "AIzaSyAdC7kpz8ftCqVjSLblO5klOjX_-1fHkQ8")
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
