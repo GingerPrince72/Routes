@@ -21,6 +21,11 @@ def init_db():
             is_depot INTEGER DEFAULT 0
         )
     ''')
+    # Safely add is_depot column if upgrading from an older database schema
+    cursor.execute("PRAGMA table_info(locations)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if 'is_depot' not in columns:
+        cursor.execute("ALTER TABLE locations ADD COLUMN is_depot INTEGER DEFAULT 0")
     conn.commit()
     conn.close()
 
@@ -35,7 +40,6 @@ def get_all_locations():
 def add_location(name, lat, lon, open_t, close_t, is_depot=0):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    # If marking as depot, clear other depots first
     if is_depot:
         cursor.execute("UPDATE locations SET is_depot = 0")
     
@@ -115,7 +119,7 @@ def run_optimization(locations_data):
         open_min = time_to_minutes(loc[4])
         close_min = time_to_minutes(loc[5])
         if idx == 0:
-            time_windows.append((420, 1440)) # Depot opens at 07:00
+            time_windows.append((420, 1440))
         else:
             time_windows.append((open_min, close_min))
 
@@ -299,7 +303,6 @@ def main():
             elif not depot_exists:
                 st.error("Cannot optimize without a Start Location (Depot).")
             else:
-                # Reorder rows so the designated depot is always index 0
                 depot_row = [r for r in rows if r[6] == 1]
                 other_rows = [r for r in rows if r[6] == 0]
                 ordered_locations = depot_row + other_rows
@@ -312,7 +315,7 @@ def main():
                         st.success("Route optimized successfully!")
                         
                         origin = f"{route_steps[0]['lat']},{route_steps[0]['lon']}"
-                        destination = f"{route_steps[0]['lat']},{route_steps[0]['lon']}" # Loops back to depot or final stop
+                        destination = f"{route_steps[0]['lat']},{route_steps[0]['lon']}"
                         waypoints = "|".join([f"{s['lat']},{s['lon']}" for s in route_steps[1:]])
                         
                         maps_export_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={origin}"
