@@ -114,11 +114,11 @@ def fetch_routes_api_matrix(locations):
 
 def run_optimization(locations_data):
     num_locations = len(locations_data)
-    if num_locations <= 1:
-        return "Error: Need at least a Start Location, stops, and a Final Destination."
+    if num_locations < 2:
+        return "Error: Need at least a Start Location and Final Destination."
 
     time_matrix = fetch_routes_api_matrix(locations_data)
-    service_times = [0] + [10] * (num_locations - 1)
+    service_times = [0] + [10] * (num_locations - 2) + [0]
 
     time_windows = []
     for idx, loc in enumerate(locations_data):
@@ -137,10 +137,17 @@ def run_optimization(locations_data):
         'service_times': service_times,
         'time_windows': time_windows,
         'num_vehicles': 1,
-        'depot': 0
+        'starts': [0],
+        'ends': [num_locations - 1]
     }
 
-    manager = pywrapcp.RoutingIndexManager(len(data['time_matrix']), data['num_vehicles'], data['depot'])
+    # Open VRP manager with explicit start (0) and end (last node)
+    manager = pywrapcp.RoutingIndexManager(
+        len(data['time_matrix']),
+        data['num_vehicles'],
+        data['starts'],
+        data['ends']
+    )
     routing = pywrapcp.RoutingModel(manager)
 
     def time_callback(from_index, to_index):
@@ -190,6 +197,25 @@ def run_optimization(locations_data):
         index = solution.Value(routing.NextVar(index))
         stop_num += 1
 
+    # Append the explicit end node since IsEnd stops right before it
+    end_node_index = data['ends'][0]
+    loc = locations_data[end_node_index]
+    end_index = routing.End(0)
+    arr_min = solution.Min(time_dimension.CumulVar(end_index))
+    arr_time_str = f"{arr_min // 60:02d}:{arr_min % 60:02d}"
+    
+    route_steps.append({
+        "stop_num": stop_num,
+        "name": loc[1],
+        "lat": loc[2],
+        "lon": loc[3],
+        "arrival_time": arr_time_str,
+        "open": loc[4],
+        "close": loc[5],
+        "is_depot": loc[6],
+        "is_end": loc[7]
+    })
+
     return route_steps
 
 def main():
@@ -212,7 +238,7 @@ def main():
                     badge = " 🏁 **[FINAL DESTINATION]**"
                 st.markdown(f"- **{r[1]}**{badge} (Lat: {r[2]}, Lon: {r[3]}) | *Hours: {r[4]} - {r[5]}*")
         else:
-            st.info("No delivery locations saved yet. Please add a Start Location first under 'Add Stop'.")
+            st.info("No delivery locations saved yet.")
 
     with tab2:
         st.subheader("Add New Location via Google Maps")
@@ -317,7 +343,7 @@ def main():
 
         if st.button("Calculate Optimized Route", type="primary"):
             if len(rows) < 2:
-                st.warning("You need at least a Start Location, a Final Destination, and intermediate stops.")
+                st.warning("You need at least a Start Location and Final Destination.")
             elif not depot_exists or not end_exists:
                 st.error("Cannot optimize without both a designated Start Location (Depot) and a Final Destination.")
             else:
@@ -325,7 +351,6 @@ def main():
                 end_row = [r for r in rows if r[7] == 1]
                 other_rows = [r for r in rows if r[6] == 0 and r[7] == 0]
                 
-                # Order: Depot first, middle stops next, final destination last
                 ordered_locations = depot_row + other_rows + end_row
 
                 with st.spinner("Computing optimal route via Google Routes API & time windows..."):
@@ -337,8 +362,6 @@ def main():
                         
                         origin = f"{route_steps[0]['lat']},{route_steps[0]['lon']}"
                         destination = f"{route_steps[-1]['lat']},{route_steps[-1]['lon']}"
-                        
-                        # All intermediate stops become waypoints
                         waypoints = "|".join([f"{s['lat']},{s['lon']}" for s in route_steps[1:-1]])
                         
                         maps_export_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={destination}"
