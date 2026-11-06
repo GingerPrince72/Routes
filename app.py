@@ -1,12 +1,12 @@
-import sqlite3
+﻿import sqlite3
 from datetime import datetime
 import streamlit as st
 import requests
 from ortools.constraint_solver import routing_enums_pb2, pywrapcp
 
 DB_NAME = "delivery_database.db"
-# Replace with your Google Maps API key (requires Routes API enabled in Google Cloud)
-GOOGLE_MAPS_API_KEY = st.secrets.get("GOOGLE_MAPS_API_KEY", "AIzaSyAdC7kpz8ftCqVjSLblO5klOjX_-1fHkQ8")
+GOOGLE_MAPS_API_KEY = st.secrets.get("GOOGLE_MAPS_API_KEY", "YOUR_GOOGLE_MAPS_API_KEY")
+
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -49,7 +49,6 @@ def delete_location(loc_id):
     conn.close()
 
 def time_to_minutes(time_str):
-    """Converts 'HH:MM' string to total minutes from midnight"""
     try:
         t = datetime.strptime(time_str.strip(), "%H:%M").time()
         return t.hour * 60 + t.minute
@@ -57,12 +56,10 @@ def time_to_minutes(time_str):
         return 0
 
 def fetch_routes_api_matrix(locations):
-    """Fetches travel times using Google's Routes API (Compute Route Matrix) with live traffic."""
     num_locs = len(locations)
     matrix = [[10] * num_locs for _ in range(num_locs)]
 
     if not GOOGLE_MAPS_API_KEY or GOOGLE_MAPS_API_KEY == "YOUR_GOOGLE_MAPS_API_KEY":
-        # Fallback synthetic matrix if no API key is provided yet
         for i in range(num_locs):
             for j in range(num_locs):
                 if i == j:
@@ -72,18 +69,11 @@ def fetch_routes_api_matrix(locations):
         return matrix
 
     url = "https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix"
-    
-    waypoints = [
-        {"placeId": None, "location": {"latLng": {"latitude": loc[2], "longitude": loc[3]}}}
-        for loc in locations
-    ]
-    
     headers = {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
         "X-Goog-FieldMask": "originIndex,destinationIndex,duration,condition"
     }
-    
     payload = {
         "origins": [{"waypoint": {"location": {"latLng": {"latitude": loc[2], "longitude": loc[3]}}}} for loc in locations],
         "destinations": [{"waypoint": {"location": {"latLng": {"latitude": loc[2], "longitude": loc[3]}}}} for loc in locations],
@@ -95,13 +85,11 @@ def fetch_routes_api_matrix(locations):
     try:
         response = requests.post(url, json=payload, headers=headers)
         data = response.json()
-        
         if isinstance(data, list):
             for element in data:
                 orig_idx = element.get("originIndex", 0)
                 dest_idx = element.get("destinationIndex", 0)
                 duration_str = element.get("duration", "0s")
-                # Parse strings like "120s" or "305.5s" into minutes
                 duration_sec = float(duration_str.replace("s", ""))
                 matrix[orig_idx][dest_idx] = round(duration_sec / 60)
     except Exception as e:
@@ -115,15 +103,14 @@ def run_optimization(locations_data):
         return "Error: Need at least 2 locations (Depot + Stop)."
 
     time_matrix = fetch_routes_api_matrix(locations_data)
-    service_times = [0] + [10] * (num_locations - 1)  # 10 mins service duration per stop
+    service_times = [0] + [10] * (num_locations - 1)
 
-    # Build time windows in minutes from midnight based on database hours
     time_windows = []
     for idx, loc in enumerate(locations_data):
         open_min = time_to_minutes(loc[4])
         close_min = time_to_minutes(loc[5])
         if idx == 0:
-            time_windows.append((420, 1440))  # Depot available from 07:00 AM
+            time_windows.append((420, 1440))
         else:
             time_windows.append((open_min, close_min))
 
@@ -202,54 +189,53 @@ def main():
         else:
             st.info("No delivery locations saved yet.")
 
-    with tab2:
-    st.subheader("Add New Delivery Stop via Google Maps")
-    search_query = st.text_input("Search Location on Google Maps", placeholder="e.g., Xerri Bakery Malta or Ta' Xbiex Pharmacy")
-    
-    if search_query:
-        if not GOOGLE_MAPS_API_KEY or GOOGLE_MAPS_API_KEY == "YOUR_GOOGLE_MAPS_API_KEY":
-            st.error("Google Maps API key is required for location search.")
-        else:
-            # Call Google Places API (Text Search v1)
-            places_url = "https://places.googleapis.com/v1/places:searchText"
-            headers = {
-                "Content-Type": "application/json",
-                "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
-                "X-Goog-FieldMask": "places.displayName,places.location,places.formattedAddress"
-            }
-            payload = {"textQuery": search_query}
-            
-            try:
-                res = requests.post(places_url, json=payload, headers=headers)
-                places_data = res.json().get("places", [])
+   with tab2:
+        st.subheader("Add New Delivery Stop via Google Maps")
+        search_query = st.text_input("Search Location on Google Maps", placeholder="e.g., Xerri Bakery Malta or Ta' Xbiex Pharmacy")
+        
+        if search_query:
+            if not GOOGLE_MAPS_API_KEY or GOOGLE_MAPS_API_KEY == "YOUR_GOOGLE_MAPS_API_KEY":
+                st.error("Google Maps API key is required for location search.")
+            else:
+                places_url = "https://places.googleapis.com/v1/places:searchText"
+                headers = {
+                    "Content-Type": "application/json",
+                    "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
+                    "X-Goog-FieldMask": "places.displayName,places.location,places.formattedAddress"
+                }
+                payload = {"textQuery": search_query}
                 
-                if places_data:
-                    selected_place = st.selectbox(
-                        "Select matching location:",
-                        options=range(len(places_data)),
-                        format_func=lambda i: f"{places_data[i]['displayName']['text']} - {places_data[i]['formattedAddress']}"
-                    )
+                try:
+                    res = requests.post(places_url, json=payload, headers=headers)
+                    places_data = res.json().get("places", [])
                     
-                    place = places_data[selected_place]
-                    name = place['displayName']['text']
-                    lat = place['location']['latitude']
-                    lon = place['location']['longitude']
-                    
-                    st.write(f"**Coordinates:** {lat}, {lon}")
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        open_t = st.text_input("Opening Time (HH:MM)", "08:00", key="map_open")
-                    with col2:
-                        close_t = st.text_input("Closing Time (HH:MM)", "17:00", key="map_close")
+                    if places_data:
+                        selected_place = st.selectbox(
+                            "Select matching location:",
+                            options=range(len(places_data)),
+                            format_func=lambda i: f"{places_data[i]['displayName']['text']} - {places_data[i]['formattedAddress']}"
+                        )
                         
-                    if st.button("Save Selected Location"):
-                        add_location(name, lat, lon, open_t, close_t)
-                        st.success(f"Added {name} successfully!")
-                else:
-                    st.warning("No locations found on Google Maps matching that query.")
-            except Exception as e:
-                st.error(f"Places API Error: {str(e)}")
+                        place = places_data[selected_place]
+                        name = place['displayName']['text']
+                        lat = place['location']['latitude']
+                        lon = place['location']['longitude']
+                        
+                        st.write(f"**Coordinates:** {lat}, {lon}")
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            open_t = st.text_input("Opening Time (HH:MM)", "08:00", key="map_open")
+                        with col2:
+                            close_t = st.text_input("Closing Time (HH:MM)", "17:00", key="map_close")
+                            
+                        if st.button("Save Selected Location"):
+                            add_location(name, lat, lon, open_t, close_t)
+                            st.success(f"Added {name} successfully!")
+                    else:
+                        st.warning("No locations found on Google Maps matching that query.")
+                except Exception as e:
+                    st.error(f"Places API Error: {str(e)}")
 
     with tab3:
         st.subheader("Manage & Delete Locations")
