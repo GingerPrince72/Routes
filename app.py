@@ -191,7 +191,7 @@ def main():
 
     with tab2:
         st.subheader("Add New Delivery Stop via Google Maps")
-        search_query = st.text_input("Search Location on Google Maps", placeholder="e.g., Charlies or Xerri Bakery")
+        search_query = st.text_input("Search Location on Google Maps", placeholder="e.g., Pharmacy or Store name")
         
         if search_query:
             if not GOOGLE_MAPS_API_KEY or GOOGLE_MAPS_API_KEY == "YOUR_GOOGLE_MAPS_API_KEY":
@@ -201,7 +201,6 @@ def main():
                 headers = {
                     "Content-Type": "application/json",
                     "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
-                    # Added regularOpeningHours to the field mask
                     "X-Goog-FieldMask": "places.displayName,places.location,places.formattedAddress,places.regularOpeningHours"
                 }
                 payload = {
@@ -230,17 +229,14 @@ def main():
                         lat = place['location']['latitude']
                         lon = place['location']['longitude']
                         
-                        # Attempt to parse opening hours if provided by Google Maps
                         default_open = "08:00"
                         default_close = "17:00"
                         
                         reg_hours = place.get("regularOpeningHours", {})
-                        periods = reg_codes = reg_hours.get("periods", [])
+                        periods = reg_hours.get("periods", [])
                         
-                        # Try to grab today's hours or standard weekday hours if available
                         if periods:
                             try:
-                                # Look for standard opening time from the first available period
                                 open_time_dict = periods[0].get("open", {})
                                 close_time_dict = periods[0].get("close", {})
                                 if "hour" in open_time_dict and "minute" in open_time_dict:
@@ -300,7 +296,7 @@ def main():
                         
                         maps_export_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={destination}"
                         if waypoints:
-                            maps_export_url += f"&waypoints={waypoints}"
+maps_export_url += f"&waypoints={waypoints}"
                         
                         st.markdown(
                             f"### 🗺️ [Export Full Route to Google Maps App]({maps_export_url})",
