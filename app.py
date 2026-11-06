@@ -189,7 +189,7 @@ def main():
         else:
             st.info("No delivery locations saved yet.")
 
-   with tab2:
+    with tab2:
         st.subheader("Add New Delivery Stop via Google Maps")
         search_query = st.text_input("Search Location on Google Maps", placeholder="e.g., Xerri Bakery Malta or Ta' Xbiex Pharmacy")
         
