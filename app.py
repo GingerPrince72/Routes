@@ -203,23 +203,53 @@ def main():
             st.info("No delivery locations saved yet.")
 
     with tab2:
-        st.subheader("Add New Delivery Stop")
-        with st.form("add_form"):
-            name = st.text_input("Location Name")
-            lat = st.text_input("Latitude", "35.9081")
-            lon = st.text_input("Longitude", "14.4984")
-            col1, col2 = st.columns(2)
-            with col1:
-                open_t = st.text_input("Opening Time (HH:MM)", "08:00")
-            with col2:
-                close_t = st.text_input("Closing Time (HH:MM)", "17:00")
+    st.subheader("Add New Delivery Stop via Google Maps")
+    search_query = st.text_input("Search Location on Google Maps", placeholder="e.g., Xerri Bakery Malta or Ta' Xbiex Pharmacy")
+    
+    if search_query:
+        if not GOOGLE_MAPS_API_KEY or GOOGLE_MAPS_API_KEY == "YOUR_GOOGLE_MAPS_API_KEY":
+            st.error("Google Maps API key is required for location search.")
+        else:
+            # Call Google Places API (Text Search v1)
+            places_url = "https://places.googleapis.com/v1/places:searchText"
+            headers = {
+                "Content-Type": "application/json",
+                "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
+                "X-Goog-FieldMask": "places.displayName,places.location,places.formattedAddress"
+            }
+            payload = {"textQuery": search_query}
             
-            submitted = st.form_submit_button("Save to Database")
-            if submitted and name:
-                add_location(name, lat, lon, open_t, close_t)
-                st.success(f"Added {name} successfully!")
-            elif submitted:
-                st.warning("Please provide a location name.")
+            try:
+                res = requests.post(places_url, json=payload, headers=headers)
+                places_data = res.json().get("places", [])
+                
+                if places_data:
+                    selected_place = st.selectbox(
+                        "Select matching location:",
+                        options=range(len(places_data)),
+                        format_func=lambda i: f"{places_data[i]['displayName']['text']} - {places_data[i]['formattedAddress']}"
+                    )
+                    
+                    place = places_data[selected_place]
+                    name = place['displayName']['text']
+                    lat = place['location']['latitude']
+                    lon = place['location']['longitude']
+                    
+                    st.write(f"**Coordinates:** {lat}, {lon}")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        open_t = st.text_input("Opening Time (HH:MM)", "08:00", key="map_open")
+                    with col2:
+                        close_t = st.text_input("Closing Time (HH:MM)", "17:00", key="map_close")
+                        
+                    if st.button("Save Selected Location"):
+                        add_location(name, lat, lon, open_t, close_t)
+                        st.success(f"Added {name} successfully!")
+                else:
+                    st.warning("No locations found on Google Maps matching that query.")
+            except Exception as e:
+                st.error(f"Places API Error: {str(e)}")
 
     with tab3:
         st.subheader("Manage & Delete Locations")
