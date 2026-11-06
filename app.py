@@ -296,7 +296,7 @@ def main():
                         
                         maps_export_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={destination}"
                         if waypoints:
-maps_export_url += f"&waypoints={waypoints}"
+                            maps_export_url += f"&waypoints={waypoints}"
                         
                         st.markdown(
                             f"### 🗺️ [Export Full Route to Google Maps App]({maps_export_url})",
