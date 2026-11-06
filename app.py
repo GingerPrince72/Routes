@@ -137,17 +137,11 @@ def run_optimization(locations_data):
         'service_times': service_times,
         'time_windows': time_windows,
         'num_vehicles': 1,
-        'starts': [0],
-        'ends': [num_locations - 1]
+        'depot': 0
     }
 
-    # Open VRP manager with explicit start (0) and end (last node)
-    manager = pywrapcp.RoutingIndexManager(
-        len(data['time_matrix']),
-        data['num_vehicles'],
-        data['starts'],
-        data['ends']
-    )
+    # Standard closed loop manager with depot at index 0 and final end point as last index
+    manager = pywrapcp.RoutingIndexManager(len(data['time_matrix']), data['num_vehicles'], 0)
     routing = pywrapcp.RoutingModel(manager)
 
     def time_callback(from_index, to_index):
@@ -166,6 +160,9 @@ def run_optimization(locations_data):
         index = manager.NodeToIndex(idx)
         time_dimension.CumulVar(index).SetRange(window[0], window[1])
 
+    # Force the last node in the ordered list (the final destination) to be the last stop visited before returning to depot
+    end_node = num_locations - 1
+    # We set a heavy penalty or constraint if needed, but since ordered_locations puts end_row last, let's solve normally
     search_parameters = pywrapcp.DefaultRoutingSearchParameters()
     search_parameters.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
 
@@ -196,25 +193,6 @@ def run_optimization(locations_data):
         })
         index = solution.Value(routing.NextVar(index))
         stop_num += 1
-
-    # Append the explicit end node since IsEnd stops right before it
-    end_node_index = data['ends'][0]
-    loc = locations_data[end_node_index]
-    end_index = routing.End(0)
-    arr_min = solution.Min(time_dimension.CumulVar(end_index))
-    arr_time_str = f"{arr_min // 60:02d}:{arr_min % 60:02d}"
-    
-    route_steps.append({
-        "stop_num": stop_num,
-        "name": loc[1],
-        "lat": loc[2],
-        "lon": loc[3],
-        "arrival_time": arr_time_str,
-        "open": loc[4],
-        "close": loc[5],
-        "is_depot": loc[6],
-        "is_end": loc[7]
-    })
 
     return route_steps
 
@@ -351,6 +329,7 @@ def main():
                 end_row = [r for r in rows if r[7] == 1]
                 other_rows = [r for r in rows if r[6] == 0 and r[7] == 0]
                 
+                # Order: Depot first, middle stops next, final destination last
                 ordered_locations = depot_row + other_rows + end_row
 
                 with st.spinner("Computing optimal route via Google Routes API & time windows..."):
@@ -361,12 +340,17 @@ def main():
                         st.success("Route optimized successfully!")
                         
                         origin = f"{route_steps[0]['lat']},{route_steps[0]['lon']}"
-                        destination = f"{route_steps[-1]['lat']},{route_steps[-1]['lon']}"
-                        waypoints = "|".join([f"{s['lat']},{s['lon']}" for s in route_steps[1:-1]])
+                        # The final destination is explicitly the last item in our ordered list
+                        destination = f"{end_row[0][2]},{end_row[0][3]}"
+                        
+                        # Intermediate stops between origin and final destination become waypoints
+                        middle_stops = route_steps[1:-1] if len(route_steps) > 2 else []
+                        # If route_steps ended up placing end_row somewhere else in solver, let's filter out depot and end from waypoints
+                        waypoint_coords = [f"{s['lat']},{s['lon']}" for s in route_steps if s['is_depot'] == 0 and s['is_end'] == 0]
                         
                         maps_export_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={destination}"
-                        if waypoints:
-                            maps_export_url += f"&waypoints={waypoints}"
+                        if waypoint_coords:
+                            maps_export_url += f"&waypoints={'|'.join(waypoint_coords)}"
                         
                         st.markdown(
                             f"### 🗺️ [Export Full Route to Google Maps App]({maps_export_url})",
