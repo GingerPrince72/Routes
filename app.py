@@ -17,7 +17,8 @@ def init_db():
             latitude REAL NOT NULL,
             longitude REAL NOT NULL,
             open_time TEXT NOT NULL,
-            close_time TEXT NOT NULL
+            close_time TEXT NOT NULL,
+            is_depot INTEGER DEFAULT 0
         )
     ''')
     conn.commit()
@@ -26,18 +27,22 @@ def init_db():
 def get_all_locations():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, name, latitude, longitude, open_time, close_time FROM locations")
+    cursor.execute("SELECT id, name, latitude, longitude, open_time, close_time, is_depot FROM locations")
     rows = cursor.fetchall()
     conn.close()
     return rows
 
-def add_location(name, lat, lon, open_t, close_t):
+def add_location(name, lat, lon, open_t, close_t, is_depot=0):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
+    # If marking as depot, clear other depots first
+    if is_depot:
+        cursor.execute("UPDATE locations SET is_depot = 0")
+    
     cursor.execute('''
-        INSERT INTO locations (name, latitude, longitude, open_time, close_time)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (name, float(lat), float(lon), open_t, close_t))
+        INSERT INTO locations (name, latitude, longitude, open_time, close_time, is_depot)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (name, float(lat), float(lon), open_t, close_t, int(is_depot)))
     conn.commit()
     conn.close()
 
@@ -100,7 +105,7 @@ def fetch_routes_api_matrix(locations):
 def run_optimization(locations_data):
     num_locations = len(locations_data)
     if num_locations <= 1:
-        return "Error: Need at least 2 locations (Depot + Stop)."
+        return "Error: Need at least 1 Start Location (Depot) and 1 Delivery Stop."
 
     time_matrix = fetch_routes_api_matrix(locations_data)
     service_times = [0] + [10] * (num_locations - 1)
@@ -110,7 +115,7 @@ def run_optimization(locations_data):
         open_min = time_to_minutes(loc[4])
         close_min = time_to_minutes(loc[5])
         if idx == 0:
-            time_windows.append((420, 1440))
+            time_windows.append((420, 1440)) # Depot opens at 07:00
         else:
             time_windows.append((open_min, close_min))
 
@@ -165,7 +170,8 @@ def run_optimization(locations_data):
             "lon": loc[3],
             "arrival_time": arr_time_str,
             "open": loc[4],
-            "close": loc[5]
+            "close": loc[5],
+            "is_depot": loc[6]
         })
         index = solution.Value(routing.NextVar(index))
         stop_num += 1
@@ -185,13 +191,14 @@ def main():
         rows = get_all_locations()
         if rows:
             for r in rows:
-                st.markdown(f"- **{r[1]}** (Lat: {r[2]}, Lon: {r[3]}) | *Hours: {r[4]} - {r[5]}*")
+                badge = " 🏢 **[START / DEPOT]**" if r[6] == 1 else ""
+                st.markdown(f"- **{r[1]}**{badge} (Lat: {r[2]}, Lon: {r[3]}) | *Hours: {r[4]} - {r[5]}*")
         else:
-            st.info("No delivery locations saved yet.")
+            st.info("No delivery locations saved yet. Please add a Start Location first under 'Add Stop'.")
 
     with tab2:
-        st.subheader("Add New Delivery Stop via Google Maps")
-        search_query = st.text_input("Search Location on Google Maps", placeholder="e.g., Pharmacy or Store name")
+        st.subheader("Add New Location or Start Depot via Google Maps")
+        search_query = st.text_input("Search Location on Google Maps", placeholder="e.g., Warehouse, Office, or Pharmacy name")
         
         if search_query:
             if not GOOGLE_MAPS_API_KEY or GOOGLE_MAPS_API_KEY == "YOUR_GOOGLE_MAPS_API_KEY":
@@ -248,6 +255,8 @@ def main():
 
                         st.write(f"**Coordinates:** {lat}, {lon}")
                         
+                        is_depot_checkbox = st.checkbox("Set as Start Location (Depot)", value=False)
+                        
                         col1, col2 = st.columns(2)
                         with col1:
                             open_t = st.text_input("Opening Time (HH:MM)", default_open, key="map_open")
@@ -255,7 +264,7 @@ def main():
                             close_t = st.text_input("Closing Time (HH:MM)", default_close, key="map_close")
                             
                         if st.button("Save Selected Location"):
-                            add_location(name, lat, lon, open_t, close_t)
+                            add_location(name, lat, lon, open_t, close_t, is_depot=1 if is_depot_checkbox else 0)
                             st.success(f"Added {name} successfully!")
                     else:
                         st.warning("No locations found on Google Maps matching that query.")
@@ -278,23 +287,35 @@ def main():
 
     with tab4:
         st.subheader("Run Route Optimization & Export")
+        rows = get_all_locations()
+        depot_exists = any(r[6] == 1 for r in rows)
+        
+        if not depot_exists and rows:
+            st.warning("⚠️ You have saved locations, but no **Start Location (Depot)** has been designated! Please go to 'Add Stop', search for your starting base, and check 'Set as Start Location (Depot)' before optimizing.")
+
         if st.button("Calculate Optimized Route", type="primary"):
-            locations = get_all_locations()
-            if len(locations) < 2:
-                st.warning("You need at least 2 locations in your database to optimize.")
+            if len(rows) < 2:
+                st.warning("You need at least 1 Start Location and 1 Delivery Stop in your database to optimize.")
+            elif not depot_exists:
+                st.error("Cannot optimize without a Start Location (Depot).")
             else:
+                # Reorder rows so the designated depot is always index 0
+                depot_row = [r for r in rows if r[6] == 1]
+                other_rows = [r for r in rows if r[6] == 0]
+                ordered_locations = depot_row + other_rows
+
                 with st.spinner("Computing optimal route via Google Routes API & time windows..."):
-                    route_steps = run_optimization(locations)
+                    route_steps = run_optimization(ordered_locations)
                     if isinstance(route_steps, str):
                         st.error(route_steps)
                     else:
                         st.success("Route optimized successfully!")
                         
                         origin = f"{route_steps[0]['lat']},{route_steps[0]['lon']}"
-                        destination = f"{route_steps[-1]['lat']},{route_steps[-1]['lon']}"
-                        waypoints = "|".join([f"{s['lat']},{s['lon']}" for s in route_steps[1:-1]])
+                        destination = f"{route_steps[0]['lat']},{route_steps[0]['lon']}" # Loops back to depot or final stop
+                        waypoints = "|".join([f"{s['lat']},{s['lon']}" for s in route_steps[1:]])
                         
-                        maps_export_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={destination}"
+                        maps_export_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={origin}"
                         if waypoints:
                             maps_export_url += f"&waypoints={waypoints}"
                         
@@ -306,9 +327,10 @@ def main():
 
                         for step in route_steps:
                             stop_maps_url = f"https://www.google.com/maps/search/?api=1&query={step['lat']},{step['lon']}"
+                            badge = "🏢 **[START / DEPOT]** " if step['is_depot'] == 1 else f"**Stop {step['stop_num']}:** "
                             st.markdown(
-                                f"**Stop {step['stop_num']}: {step['name']}**<br>"
-                                f"🕒 *Estimated Arrival: {step['arrival_time']}* (Outlet Open: {step['open']} - {step['close']})<br>"
+                                f"{badge}{step['name']}<br>"
+                                f"🕒 *Estimated Arrival: {step['arrival_time']}* (Hours: {step['open']} - {step['close']})<br>"
                                 f"📍 [Open Stop in Maps]({stop_maps_url})",
                                 unsafe_allow_html=True
                             )
