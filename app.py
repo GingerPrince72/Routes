@@ -191,7 +191,7 @@ def main():
 
     with tab2:
         st.subheader("Add New Delivery Stop via Google Maps")
-        search_query = st.text_input("Search Location on Google Maps", placeholder="e.g., Xerri Bakery Malta or Ta' Xbiex Pharmacy")
+        search_query = st.text_input("Search Location on Google Maps", placeholder="e.g., Charlies or Xerri Bakery")
         
         if search_query:
             if not GOOGLE_MAPS_API_KEY or GOOGLE_MAPS_API_KEY == "YOUR_GOOGLE_MAPS_API_KEY":
@@ -203,7 +203,16 @@ def main():
                     "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
                     "X-Goog-FieldMask": "places.displayName,places.location,places.formattedAddress"
                 }
-                payload = {"textQuery": search_query}
+                # Added locationBias centered on Malta (radius 20km) so local spots match instantly
+                payload = {
+                    "textQuery": search_query,
+                    "locationBias": {
+                        "circle": {
+                            "center": {"latitude": 35.8985, "longitude": 14.5146},
+                            "radius": 20000.0
+                        }
+                    }
+                }
                 
                 try:
                     res = requests.post(places_url, json=payload, headers=headers)
