@@ -100,8 +100,10 @@ def fetch_routes_api_matrix(locations):
                 duration_str = element.get("duration", "0s")
                 duration_sec = float(duration_str.replace("s", ""))
                 matrix[orig_idx][dest_idx] = round(duration_sec / 60)
+        elif isinstance(data, dict) and "error" in data:
+            st.error(f"Routes API Error Details: {data['error'].get('message', 'Unknown error')}")
     except Exception as e:
-        st.error(f"Routes API Error: {str(e)}")
+        st.error(f"Routes API Connection Error: {str(e)}")
 
     return matrix
 
@@ -120,7 +122,10 @@ def run_optimization(locations_data):
         if idx == 0:
             time_windows.append((420, 1440))
         else:
-            time_windows.append((open_min, close_min))
+            if open_min == 0 and close_min == 0:
+                time_windows.append((0, 1440))
+            else:
+                time_windows.append((open_min, close_min))
 
     data = {
         'time_matrix': time_matrix,
@@ -154,7 +159,7 @@ def run_optimization(locations_data):
 
     solution = routing.SolveWithParameters(search_parameters)
     if not solution:
-        return "No feasible route found satisfying outlet opening hours and time windows."
+        return "No feasible route found. Check if outlet opening hours conflict with travel time or are too restrictive."
 
     index = routing.Start(0)
     route_steps = []
@@ -315,9 +320,9 @@ def main():
                         
                         origin = f"{route_steps[0]['lat']},{route_steps[0]['lon']}"
                         
-                        # Set final stop as the destination instead of looping back to depot
                         if len(route_steps) > 1:
                             destination = f"{route_steps[-1]['lat']},{route_steps[-1]['lon']}"
+                            # Intermediate stops between origin and final destination become waypoints
                             waypoints = "|".join([f"{s['lat']},{s['lon']}" for s in route_steps[1:-1]])
                         else:
                             destination = origin
