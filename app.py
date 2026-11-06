@@ -201,9 +201,9 @@ def main():
                 headers = {
                     "Content-Type": "application/json",
                     "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
-                    "X-Goog-FieldMask": "places.displayName,places.location,places.formattedAddress"
+                    # Added regularOpeningHours to the field mask
+                    "X-Goog-FieldMask": "places.displayName,places.location,places.formattedAddress,places.regularOpeningHours"
                 }
-                # Added locationBias centered on Malta (radius 20km) so local spots match instantly
                 payload = {
                     "textQuery": search_query,
                     "locationBias": {
@@ -230,13 +230,33 @@ def main():
                         lat = place['location']['latitude']
                         lon = place['location']['longitude']
                         
+                        # Attempt to parse opening hours if provided by Google Maps
+                        default_open = "08:00"
+                        default_close = "17:00"
+                        
+                        reg_hours = place.get("regularOpeningHours", {})
+                        periods = reg_codes = reg_hours.get("periods", [])
+                        
+                        # Try to grab today's hours or standard weekday hours if available
+                        if periods:
+                            try:
+                                # Look for standard opening time from the first available period
+                                open_time_dict = periods[0].get("open", {})
+                                close_time_dict = periods[0].get("close", {})
+                                if "hour" in open_time_dict and "minute" in open_time_dict:
+                                    default_open = f"{open_time_dict.get('hour', 8):02d}:{open_time_dict.get('minute', 0):02d}"
+                                if "hour" in close_time_dict and "minute" in close_time_dict:
+                                    default_close = f"{close_time_dict.get('hour', 17):02d}:{close_time_dict.get('minute', 0):02d}"
+                            except:
+                                pass
+
                         st.write(f"**Coordinates:** {lat}, {lon}")
                         
                         col1, col2 = st.columns(2)
                         with col1:
-                            open_t = st.text_input("Opening Time (HH:MM)", "08:00", key="map_open")
+                            open_t = st.text_input("Opening Time (HH:MM)", default_open, key="map_open")
                         with col2:
-                            close_t = st.text_input("Closing Time (HH:MM)", "17:00", key="map_close")
+                            close_t = st.text_input("Closing Time (HH:MM)", default_close, key="map_close")
                             
                         if st.button("Save Selected Location"):
                             add_location(name, lat, lon, open_t, close_t)
