@@ -18,34 +18,39 @@ def init_db():
             longitude REAL NOT NULL,
             open_time TEXT NOT NULL,
             close_time TEXT NOT NULL,
-            is_depot INTEGER DEFAULT 0
+            is_depot INTEGER DEFAULT 0,
+            is_end INTEGER DEFAULT 0
         )
     ''')
     cursor.execute("PRAGMA table_info(locations)")
     columns = [col[1] for col in cursor.fetchall()]
     if 'is_depot' not in columns:
         cursor.execute("ALTER TABLE locations ADD COLUMN is_depot INTEGER DEFAULT 0")
+    if 'is_end' not in columns:
+        cursor.execute("ALTER TABLE locations ADD COLUMN is_end INTEGER DEFAULT 0")
     conn.commit()
     conn.close()
 
 def get_all_locations():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, name, latitude, longitude, open_time, close_time, is_depot FROM locations")
+    cursor.execute("SELECT id, name, latitude, longitude, open_time, close_time, is_depot, is_end FROM locations")
     rows = cursor.fetchall()
     conn.close()
     return rows
 
-def add_location(name, lat, lon, open_t, close_t, is_depot=0):
+def add_location(name, lat, lon, open_t, close_t, is_depot=0, is_end=0):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     if is_depot:
         cursor.execute("UPDATE locations SET is_depot = 0")
+    if is_end:
+        cursor.execute("UPDATE locations SET is_end = 0")
     
     cursor.execute('''
-        INSERT INTO locations (name, latitude, longitude, open_time, close_time, is_depot)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (name, float(lat), float(lon), open_t, close_t, int(is_depot)))
+        INSERT INTO locations (name, latitude, longitude, open_time, close_time, is_depot, is_end)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (name, float(lat), float(lon), open_t, close_t, int(is_depot), int(is_end)))
     conn.commit()
     conn.close()
 
@@ -110,7 +115,7 @@ def fetch_routes_api_matrix(locations):
 def run_optimization(locations_data):
     num_locations = len(locations_data)
     if num_locations <= 1:
-        return "Error: Need at least 1 Start Location (Depot) and 1 Delivery Stop."
+        return "Error: Need at least a Start Location, stops, and a Final Destination."
 
     time_matrix = fetch_routes_api_matrix(locations_data)
     service_times = [0] + [10] * (num_locations - 1)
@@ -179,7 +184,8 @@ def run_optimization(locations_data):
             "arrival_time": arr_time_str,
             "open": loc[4],
             "close": loc[5],
-            "is_depot": loc[6]
+            "is_depot": loc[6],
+            "is_end": loc[7]
         })
         index = solution.Value(routing.NextVar(index))
         stop_num += 1
@@ -199,13 +205,17 @@ def main():
         rows = get_all_locations()
         if rows:
             for r in rows:
-                badge = " 🏢 **[START / DEPOT]**" if r[6] == 1 else ""
+                badge = ""
+                if r[6] == 1:
+                    badge = " 🏢 **[START / DEPOT]**"
+                elif r[7] == 1:
+                    badge = " 🏁 **[FINAL DESTINATION]**"
                 st.markdown(f"- **{r[1]}**{badge} (Lat: {r[2]}, Lon: {r[3]}) | *Hours: {r[4]} - {r[5]}*")
         else:
             st.info("No delivery locations saved yet. Please add a Start Location first under 'Add Stop'.")
 
     with tab2:
-        st.subheader("Add New Location or Start Depot via Google Maps")
+        st.subheader("Add New Location via Google Maps")
         search_query = st.text_input("Search Location on Google Maps", placeholder="e.g., Warehouse, Office, or Pharmacy name")
         
         if search_query:
@@ -264,6 +274,7 @@ def main():
                         st.write(f"**Coordinates:** {lat}, {lon}")
                         
                         is_depot_checkbox = st.checkbox("Set as Start Location (Depot)", value=False)
+                        is_end_checkbox = st.checkbox("Set as Final Destination (End Stop)", value=False)
                         
                         col1, col2 = st.columns(2)
                         with col1:
@@ -272,7 +283,7 @@ def main():
                             close_t = st.text_input("Closing Time (HH:MM)", default_close, key="map_close")
                             
                         if st.button("Save Selected Location"):
-                            add_location(name, lat, lon, open_t, close_t, is_depot=1 if is_depot_checkbox else 0)
+                            add_location(name, lat, lon, open_t, close_t, is_depot=1 if is_depot_checkbox else 0, is_end=1 if is_end_checkbox else 0)
                             st.success(f"Added {name} successfully!")
                     else:
                         st.warning("No locations found on Google Maps matching that query.")
@@ -297,19 +308,25 @@ def main():
         st.subheader("Run Route Optimization & Export")
         rows = get_all_locations()
         depot_exists = any(r[6] == 1 for r in rows)
+        end_exists = any(r[7] == 1 for r in rows)
         
         if not depot_exists and rows:
-            st.warning("⚠️ You have saved locations, but no **Start Location (Depot)** has been designated! Please go to 'Add Stop', search for your starting base, and check 'Set as Start Location (Depot)' before optimizing.")
+            st.warning("⚠️ No **Start Location (Depot)** designated!")
+        if not end_exists and rows:
+            st.warning("⚠️ No **Final Destination (End Stop)** designated!")
 
         if st.button("Calculate Optimized Route", type="primary"):
             if len(rows) < 2:
-                st.warning("You need at least 1 Start Location and 1 Delivery Stop in your database to optimize.")
-            elif not depot_exists:
-                st.error("Cannot optimize without a Start Location (Depot).")
+                st.warning("You need at least a Start Location, a Final Destination, and intermediate stops.")
+            elif not depot_exists or not end_exists:
+                st.error("Cannot optimize without both a designated Start Location (Depot) and a Final Destination.")
             else:
                 depot_row = [r for r in rows if r[6] == 1]
-                other_rows = [r for r in rows if r[6] == 0]
-                ordered_locations = depot_row + other_rows
+                end_row = [r for r in rows if r[7] == 1]
+                other_rows = [r for r in rows if r[6] == 0 and r[7] == 0]
+                
+                # Order: Depot first, middle stops next, final destination last
+                ordered_locations = depot_row + other_rows + end_row
 
                 with st.spinner("Computing optimal route via Google Routes API & time windows..."):
                     route_steps = run_optimization(ordered_locations)
@@ -319,14 +336,10 @@ def main():
                         st.success("Route optimized successfully!")
                         
                         origin = f"{route_steps[0]['lat']},{route_steps[0]['lon']}"
+                        destination = f"{route_steps[-1]['lat']},{route_steps[-1]['lon']}"
                         
-                        if len(route_steps) > 1:
-                            destination = f"{route_steps[-1]['lat']},{route_steps[-1]['lon']}"
-                            # Intermediate stops between origin and final destination become waypoints
-                            waypoints = "|".join([f"{s['lat']},{s['lon']}" for s in route_steps[1:-1]])
-                        else:
-                            destination = origin
-                            waypoints = ""
+                        # All intermediate stops become waypoints
+                        waypoints = "|".join([f"{s['lat']},{s['lon']}" for s in route_steps[1:-1]])
                         
                         maps_export_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={destination}"
                         if waypoints:
@@ -340,7 +353,13 @@ def main():
 
                         for step in route_steps:
                             stop_maps_url = f"https://www.google.com/maps/search/?api=1&query={step['lat']},{step['lon']}"
-                            badge = "🏢 **[START / DEPOT]** " if step['is_depot'] == 1 else f"**Stop {step['stop_num']}:** "
+                            if step['is_depot'] == 1:
+                                badge = "🏢 **[START / DEPOT]** "
+                            elif step['is_end'] == 1:
+                                badge = "🏁 **[FINAL DESTINATION]** "
+                            else:
+                                badge = f"**Stop {step['stop_num']}:** "
+                                
                             st.markdown(
                                 f"{badge}{step['name']}<br>"
                                 f"🕒 *Estimated Arrival: {step['arrival_time']}* (Hours: {step['open']} - {step['close']})<br>"
