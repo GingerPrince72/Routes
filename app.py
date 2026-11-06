@@ -21,7 +21,6 @@ def init_db():
             is_depot INTEGER DEFAULT 0
         )
     ''')
-    # Safely add is_depot column if upgrading from an older database schema
     cursor.execute("PRAGMA table_info(locations)")
     columns = [col[1] for col in cursor.fetchall()]
     if 'is_depot' not in columns:
@@ -315,10 +314,16 @@ def main():
                         st.success("Route optimized successfully!")
                         
                         origin = f"{route_steps[0]['lat']},{route_steps[0]['lon']}"
-                        destination = f"{route_steps[0]['lat']},{route_steps[0]['lon']}"
-                        waypoints = "|".join([f"{s['lat']},{s['lon']}" for s in route_steps[1:]])
                         
-                        maps_export_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={origin}"
+                        # Set final stop as the destination instead of looping back to depot
+                        if len(route_steps) > 1:
+                            destination = f"{route_steps[-1]['lat']},{route_steps[-1]['lon']}"
+                            waypoints = "|".join([f"{s['lat']},{s['lon']}" for s in route_steps[1:-1]])
+                        else:
+                            destination = origin
+                            waypoints = ""
+                        
+                        maps_export_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={destination}"
                         if waypoints:
                             maps_export_url += f"&waypoints={waypoints}"
                         
