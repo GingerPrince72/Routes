@@ -1,0 +1,10 @@
+*.db
+*.db-*
+*.sqlite*
+.env*
+.streamlit/secrets.toml
+__pycache__/
+*.py[cod]
+app.py.before-*
+routes95_*_app.py
+.app-*
